@@ -94,6 +94,9 @@ jobs:
         cp "$RUNNER_TEMP/protobuf-build/conformance_test_runner" "$RUNNER_TEMP/protobuf-runner/conformance_test_runner"
     - name: "Generate protobuf.js conformance target"
       run: node tests/conformance/generate.js
+    - name: "Locate Node.js"
+      id: node
+      run: echo "path=$(command -v node)" >> "$GITHUB_OUTPUT"
     - name: "List conformance tests"
       run: |
         mkdir -p tests/conformance/out
@@ -105,7 +108,7 @@ jobs:
           --failure_list tests/conformance/out/failure_list.txt \
           --text_format_failure_list tests/conformance/text_format_failure_list.txt \
           --output_dir tests/conformance/out \
-          node tests/conformance/runner.js \
+          "${{ steps.node.outputs.path }}" tests/conformance/runner.js \
           > tests/conformance/out/conformance-tests.log 2>&1
     - name: "Run conformance suite"
       id: conformance
@@ -117,7 +120,7 @@ jobs:
           --failure_list tests/conformance/out/failure_list.txt \
           --text_format_failure_list tests/conformance/text_format_failure_list.txt \
           --output_dir tests/conformance/out \
-          node tests/conformance/runner.js \
+          "${{ steps.node.outputs.path }}" tests/conformance/runner.js \
           > tests/conformance/out/conformance.log 2>&1
         status=$?
         set -e
