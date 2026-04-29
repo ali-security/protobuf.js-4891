@@ -52,3 +52,83 @@ jobs:
       run: npm install
     - name: "Run benchmark"
       run: npm run bench
+  conformance:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      PROTOBUF_UPSTREAM_VERSION: "v34.1"
+      PROTOBUF_UPSTREAM: "tests/conformance/upstream"
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-node@v6
+      with:
+        node-version: "lts/*"
+    - name: "Install build dependencies"
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build
+    - name: "Install dependencies"
+      run: npm install --ignore-scripts
+    - name: "Install CLI dependencies"
+      run: npm --prefix cli install --ignore-scripts
+    - name: "Check out upstream protobuf"
+      run: git clone --depth 1 --branch "$PROTOBUF_UPSTREAM_VERSION" https://github.com/protocolbuffers/protobuf.git "$PROTOBUF_UPSTREAM"
+    - name: "Prepare conformance runner cache"
+      run: mkdir -p "$RUNNER_TEMP/protobuf-runner"
+    - uses: actions/cache@v4
+      id: conformance-runner-cache
+      with:
+        path: ${{ runner.temp }}/protobuf-runner
+        key: protobuf-conformance-runner-${{ runner.os }}-${{ env.PROTOBUF_UPSTREAM_VERSION }}-v1
+    - name: "Build upstream conformance runner"
+      if: steps.conformance-runner-cache.outputs.cache-hit != 'true'
+      run: |
+        cmake -S "$PROTOBUF_UPSTREAM" -B "$RUNNER_TEMP/protobuf-build" -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dprotobuf_BUILD_CONFORMANCE=ON \
+          -Dprotobuf_BUILD_TESTS=OFF \
+          -Dprotobuf_BUILD_EXAMPLES=OFF \
+          -Dprotobuf_INSTALL=OFF \
+          -Dprotobuf_FORCE_FETCH_DEPENDENCIES=ON
+        cmake --build "$RUNNER_TEMP/protobuf-build" --target conformance_test_runner --parallel 2
+        cp "$RUNNER_TEMP/protobuf-build/conformance_test_runner" "$RUNNER_TEMP/protobuf-runner/conformance_test_runner"
+    - name: "Generate protobuf.js conformance target"
+      run: node tests/conformance/generate.js
+    - name: "List conformance tests"
+      run: |
+        mkdir -p tests/conformance/out
+        : > tests/conformance/out/failure_list.txt
+        CONFORMANCE_LIST_TESTS=1 "$RUNNER_TEMP/protobuf-runner/conformance_test_runner" \
+          --maximum_edition 2024 \
+          --enforce_recommended \
+          --verbose \
+          --failure_list tests/conformance/out/failure_list.txt \
+          --text_format_failure_list tests/conformance/text_format_failure_list.txt \
+          --output_dir tests/conformance/out \
+          node tests/conformance/runner.js \
+          > tests/conformance/out/conformance-tests.log 2>&1
+    - name: "Run conformance suite"
+      id: conformance
+      run: |
+        set +e
+        "$RUNNER_TEMP/protobuf-runner/conformance_test_runner" \
+          --maximum_edition 2024 \
+          --enforce_recommended \
+          --failure_list tests/conformance/out/failure_list.txt \
+          --text_format_failure_list tests/conformance/text_format_failure_list.txt \
+          --output_dir tests/conformance/out \
+          node tests/conformance/runner.js \
+          > tests/conformance/out/conformance.log 2>&1
+        status=$?
+        set -e
+        echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+        tail -n 80 tests/conformance/out/conformance.log
+    - name: "Summarize conformance results"
+      if: always()
+      run: node tests/conformance/report.js tests/conformance/out/conformance.log tests/conformance/out/conformance-tests.log | tee -a "$GITHUB_STEP_SUMMARY"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: protobufjs-conformance
+        path: tests/conformance/out/
+        if-no-files-found: warn
